@@ -1,0 +1,4 @@
+﻿# Pipeline configuration
+pipeline:
+  name: vision-ocr-accessibility
+  version: 1
