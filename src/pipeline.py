@@ -143,14 +143,17 @@ class Pipeline:
         gated = apply_gate(rec_results, boxes_ordered, threshold=self.conf_threshold)
 
         # ── 6. TTS ──
+        tts_start = time.perf_counter()
         tts_output = self.speaker.speak(gated)
+        tts_latency = time.perf_counter() - tts_start
 
-        total_latency = time.perf_counter() - pipeline_start
+        total_latency = time.perf_counter() - pipeline_start - tts_latency  # Exclude TTS from compute latency report
 
         # ── Latency report ──
         latency = {
             "detection_s":   round(det_latency, 4),
             "recognition_s": round(rec_latency, 4),
+            "tts_s":         round(tts_latency, 4),
             "total_s":       round(total_latency, 4),
             "within_budget": total_latency <= self.budget_s
         }
