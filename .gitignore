@@ -14,3 +14,6 @@ __pycache__/
 
 # Model artifacts
 models/weights/
+
+# mlflow setup
+configs/mlflow.env
