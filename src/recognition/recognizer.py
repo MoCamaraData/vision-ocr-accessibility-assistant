@@ -1,7 +1,10 @@
 """
-Wraps TrOCR (microsoft/trocr-base-printed) for text recognition.
-Loads model once at startup, processes one crop at a time.
+Usage:
+    from src.recognition.recognizer import load_recognizer, run_recognizer
 
+    processor, model = load_recognizer(device="cuda")
+    results, latency = run_recognizer(processor, model, crops, device="cuda")
+    # results: List[{"text": str, "confidence": float}]
 """
 
 import time
@@ -15,31 +18,35 @@ from transformers import TrOCRProcessor, VisionEncoderDecoderModel, logging
 # Suppress the expected pooler weight warning — those weights are unused
 logging.set_verbosity_error()
 
-CHECKPOINT = "microsoft/trocr-base-printed"
+DEFAULT_CHECKPOINT = "microsoft/trocr-base-printed"
 
 
 def load_recognizer(
     device: str = "cuda",
-    cache_dir: str = None
+    cache_dir: str = None,
+    checkpoint: str = None
 ) -> Tuple:
     """
     Load TrOCR processor and model.
 
     Args:
-        device:    "cuda" or "cpu"
-        cache_dir: optional path to cache model weights (useful on Drive)
+        device:     "cuda" or "cpu"
+        cache_dir:  optional path to cache model weights (useful on Drive)
+        checkpoint: model name or local path — defaults to trocr-base-printed.
+                    Pass fine-tuned model path here for Phase 6b.
 
     Returns:
         (processor, model) tuple
     """
-    print(f"Loading recognizer (TrOCR) on {device}...")
-    processor = TrOCRProcessor.from_pretrained(CHECKPOINT, cache_dir=cache_dir)
+    ckpt = checkpoint if checkpoint else DEFAULT_CHECKPOINT
+    print(f"Loading recognizer: {ckpt} on {device}...")
+    processor = TrOCRProcessor.from_pretrained(ckpt, cache_dir=cache_dir)
     model     = VisionEncoderDecoderModel.from_pretrained(
-        CHECKPOINT, cache_dir=cache_dir
+        ckpt, cache_dir=cache_dir
     ).to(device)
     model.eval()
     params = sum(p.numel() for p in model.parameters()) / 1e6
-    print(f"Recognizer ready   ({params:.0f}M parameters)")
+    print(f"Recognizer ready ✓  ({params:.0f}M parameters)")
     return processor, model
 
 

@@ -1,4 +1,6 @@
 """
+src/pipeline.py
+
 Orchestrates the full OCR-to-speech accessibility pipeline:
   Image → Detection → Cropping → Recognition → Gate → Reading Order → TTS
 
@@ -57,16 +59,19 @@ class Pipeline:
         device: str = "cuda",
         tts_backend: str = "local",
         config_path: Path = _CONFIG_PATH,
-        model_cache_dir: str = None
+        model_cache_dir: str = None,
+        recognition_checkpoint: str = None
     ):
         """
         Load all models once at init time.
 
         Args:
-            device:          "cuda" or "cpu"
-            tts_backend:     "local" or "cloud"
-            config_path:     path to pipeline.yaml
-            model_cache_dir: optional cache dir for TrOCR weights (e.g. Drive path)
+            device:                  "cuda" or "cpu"
+            tts_backend:             "local" or "cloud"
+            config_path:             path to pipeline.yaml
+            model_cache_dir:         optional cache dir for TrOCR weights
+            recognition_checkpoint:  path to fine-tuned model — defaults to
+                                     trocr-base-printed if not provided
         """
         self.cfg    = _load_config(config_path)
         self.device = device
@@ -74,7 +79,9 @@ class Pipeline:
         # Load models
         self.detector              = load_detector(device=device)
         self.processor, self.model = load_recognizer(
-            device=device, cache_dir=model_cache_dir
+            device=device,
+            cache_dir=model_cache_dir,
+            checkpoint=recognition_checkpoint
         )
 
         # TTS
@@ -133,7 +140,7 @@ class Pipeline:
         if not boxes:
             return self._empty_result(det_latency)
 
-        # ── 2. Deduplicate boxes  ──
+        # ── 2. Deduplicate boxes (Phase 5) ──
         # Use uniform score of 1.0 — docTR doesn't return per-box confidence
         # at detection stage; dedup is purely geometry-based here
         scores = [1.0] * len(boxes)
@@ -144,7 +151,7 @@ class Pipeline:
         sorted_indices = sort_boxes(boxes, row_tolerance=self.row_tolerance)
         boxes_ordered  = [boxes[i] for i in sorted_indices]
 
-        # ── 4. Cap max crops — bound worst-case latency ──
+        # ── 4. Cap max crops (Phase 5) — bound worst-case latency ──
         if len(boxes_ordered) > self.max_crops:
             boxes_ordered = boxes_ordered[:self.max_crops]
 
