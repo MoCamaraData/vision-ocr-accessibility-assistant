@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+edge-tts
+pillow
+numpy
+pydantic
+python-multipart
+transformers
+torch
+python-doctr[torch]
+pyyaml
+huggingface-hub
