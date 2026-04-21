@@ -1,12 +1,6 @@
 """
 app.py — OCR Accessibility Pipeline Demo
-Gradio interface with three modes: upload, webcam snapshot, real-time capture.
-
-Usage on Colab (VSCode extension or browser):
-    1. Mount Drive
-    2. Set PROJECT_ROOT to your Drive project folder
-    3. Run: !python app.py
-    The app launches with share=True — a public URL is printed.
+Three tabs: Upload, Webcam Snapshot, Real-Time streaming.
 """
 
 import io
@@ -20,9 +14,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageOps
 
-# ── Paths — update PROJECT_ROOT if different ──────────────────────────────────
+# ── Paths ─────────────────────────────────────────────────────────────────────
 
 PROJECT_ROOT = Path(os.environ.get(
     "PROJECT_ROOT",
@@ -33,13 +27,11 @@ MODEL_CACHE  = PROJECT_ROOT / "models/trocr"
 FINETUNE_DIR = PROJECT_ROOT / "models/trocr-finetuned"
 TMP_DIR      = Path(tempfile.gettempdir())
 
-# Add project root to path so src/ imports work
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 assert FINETUNE_DIR.exists(), (
-    f"Fine-tuned model not found at {FINETUNE_DIR}. "
-    "Run 06a first to generate it."
+    f"Fine-tuned model not found at {FINETUNE_DIR}. Run 06a first."
 )
 
 print(f"Project root : {PROJECT_ROOT}")
@@ -53,7 +45,6 @@ def load_pipeline():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Loading pipeline on {device}...")
-
     pipe = Pipeline(
         device=device,
         tts_backend="cloud",
@@ -71,9 +62,11 @@ def run_inference(image: Image.Image):
     if image is None:
         return None, None, "No image provided."
 
+    # Fix EXIF orientation
+    image = ImageOps.exif_transpose(image)
+
     tmp_path = str(TMP_DIR / "input_image.jpg")
     image.save(tmp_path)
-
     result = pipe.run(tmp_path)
 
     # Annotated image
@@ -101,7 +94,6 @@ def run_inference(image: Image.Image):
     buf.seek(0)
     annotated = Image.open(buf).convert("RGB")
 
-    # Info text
     spoken   = [r["text"] for r in result["gated_results"] if not r["gated"]]
     silenced = [r["text"] for r in result["gated_results"] if r["gated"]]
     det_ms   = result["latency"]["detection_s"] * 1000
@@ -118,7 +110,6 @@ def run_inference(image: Image.Image):
         f"Total      : {total_ms:.1f}ms  ({budget})"
     )
 
-    # Audio
     audio = None
     if result["tts_output"]:
         audio_path = str(TMP_DIR / "tts_output.mp3")
@@ -134,10 +125,16 @@ def process_upload(image):
 
 
 def process_webcam(image):
-    if image is not None:
-        import PIL.ImageOps
-        image = PIL.ImageOps.mirror(image)
     return run_inference(image)
+
+
+def stream_realtime(image):
+    """Generator for real-time streaming — processes each incoming frame."""
+    if image is None:
+        yield None, None, "Waiting for camera..."
+        return
+    annotated, audio, info = run_inference(image)
+    yield annotated, audio, info
 
 
 # ── Gradio UI ─────────────────────────────────────────────────────────────────
@@ -158,6 +155,7 @@ with gr.Blocks(title="OCR Accessibility Pipeline", theme=gr.themes.Soft()) as de
 
     with gr.Tabs():
 
+        # ── Tab 1: Upload ──────────────────────────────────────────────────
         with gr.Tab("Upload Image"):
             with gr.Row():
                 with gr.Column():
@@ -174,11 +172,16 @@ with gr.Blocks(title="OCR Accessibility Pipeline", theme=gr.themes.Soft()) as de
                 outputs=[upload_output_img, upload_output_audio, upload_output_info]
             )
 
+        # ── Tab 2: Webcam Snapshot ─────────────────────────────────────────
         with gr.Tab("Webcam Snapshot"):
             with gr.Row():
                 with gr.Column():
-                    webcam_input  = gr.Image(sources=["webcam"], type="pil",
-                                             label="Capture from webcam")
+                    webcam_input  = gr.Image(
+                        sources=["webcam"],
+                        type="pil",
+                        mirror_webcam=False,
+                        label="Capture from webcam"
+                    )
                     webcam_button = gr.Button("Run Pipeline", variant="primary")
                 with gr.Column():
                     webcam_output_img   = gr.Image(type="pil", label="Annotated Output")
@@ -191,25 +194,33 @@ with gr.Blocks(title="OCR Accessibility Pipeline", theme=gr.themes.Soft()) as de
                 outputs=[webcam_output_img, webcam_output_audio, webcam_output_info]
             )
 
+        # ── Tab 3: Real-Time Streaming ─────────────────────────────────────
         with gr.Tab("Real-Time"):
             gr.Markdown(
-                "Press **Capture & Process** to take a webcam frame and run the pipeline. "
-                "Re-press to process a new frame."
+                "Click **Start** on the webcam to begin streaming. "
+                "The pipeline processes each frame continuously and updates the output live."
             )
             with gr.Row():
                 with gr.Column():
-                    rt_input  = gr.Image(sources=["webcam"], type="pil",
-                                         label="Webcam feed — click capture")
-                    rt_button = gr.Button("Capture & Process", variant="primary")
+                    rt_input = gr.Image(
+                        sources=["webcam"],
+                        type="pil",
+                        mirror_webcam=False,
+                        streaming=True,
+                        label="Live camera"
+                    )
                 with gr.Column():
                     rt_output_img   = gr.Image(type="pil", label="Annotated Output")
-                    rt_output_audio = gr.Audio(label="TTS Output", type="filepath")
+                    rt_output_audio = gr.Audio(label="TTS Output", type="filepath",
+                                               autoplay=True)
                     rt_output_info  = gr.Textbox(label="Results", lines=7)
 
-            rt_button.click(
-                fn=process_webcam,
+            rt_input.stream(
+                fn=stream_realtime,
                 inputs=rt_input,
-                outputs=[rt_output_img, rt_output_audio, rt_output_info]
+                outputs=[rt_output_img, rt_output_audio, rt_output_info],
+                time_limit=300,
+                stream_every=3    # process one frame every 3 seconds
             )
 
     gr.Markdown(
