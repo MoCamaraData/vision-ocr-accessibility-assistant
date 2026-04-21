@@ -17,3 +17,9 @@ models/weights/
 
 # mlflow setup
 configs/mlflow.env
+notebooks/
+data/
+outputs/
+models/
+.mlflow/
+configs/secrets*
