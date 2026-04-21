@@ -12,6 +12,7 @@ import base64
 import binascii
 import io
 import os
+import re
 import sys
 import time
 from difflib import SequenceMatcher
@@ -19,6 +20,7 @@ from pathlib import Path
 
 import edge_tts
 import uvicorn
+import wordninja
 from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
@@ -72,23 +74,76 @@ async def load_pipeline() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Text assembly
+# ---------------------------------------------------------------------------
+def fix_token(token: str) -> str:
+    token = token.strip()
+    if not token or " " in token:
+        return token
+    # Very short = acronym (WC, NYC, OK) — don't split
+    if len(token) <= 3:
+        return token
+    # Try to split — works on both lowercase and uppercase
+    parts = wordninja.split(token.lower())
+    if len(parts) > 1:
+        # Preserve original casing of the full token on each part
+        return " ".join(parts)
+    return token
+
+
+def assemble_tokens(tokens: list[str]) -> str:
+    """
+    Fix and reassemble tokens into natural speech-ready text.
+
+    - Glued words split: "tobe" → "to be", "exithere" → "exit here"
+    - Single words from split boxes joined as one phrase
+    - Separate regions (multi-word tokens) separated by '. '
+
+    Examples:
+      ["tobe", "ornot"]              → "to be. or not"
+      ["PUSH", "DOOR", "HANDLE"]     → "PUSH DOOR HANDLE"
+      ["EXIT", "PUSH DOOR HANDLE"]   → "EXIT. PUSH DOOR HANDLE"
+    """
+    if not tokens:
+        return ""
+
+    fixed_tokens = [fix_token(t) for t in tokens]
+
+    segments    = []
+    word_buffer = []
+
+    for token in fixed_tokens:
+        token = token.strip()
+        if not token:
+            continue
+        if len(token.split()) == 1:
+            word_buffer.append(token)
+        else:
+            if word_buffer:
+                segments.append(" ".join(word_buffer))
+                word_buffer = []
+            segments.append(token)
+
+    if word_buffer:
+        segments.append(" ".join(word_buffer))
+
+    return ". ".join(segments)
+
+
+# ---------------------------------------------------------------------------
 # TTS
 # ---------------------------------------------------------------------------
-async def synthesize_chunked(tokens: list[str]) -> bytes:
+async def synthesize(tokens: list[str]) -> bytes:
     """
-    Synthesize each detected text token as a separate edge-tts call.
-    Concatenating the audio produces a natural pause between tokens,
-    matching how a human would read separate text regions aloud.
-
-    Example: ["EXIT", "PUSH DOOR HANDLE"]
-    Result:  "EXIT." [pause] "PUSH DOOR HANDLE."
+    Assemble tokens into natural text then make a single TTS call.
     """
+    text = assemble_tokens(tokens)
+    print(f"TTS synthesizing: {text!r}")
     buffer = io.BytesIO()
-    for token in tokens:
-        communicate = edge_tts.Communicate(token, VOICE)
-        async for part in communicate.stream():
-            if part["type"] == "audio":
-                buffer.write(part["data"])
+    communicate = edge_tts.Communicate(text, VOICE)
+    async for part in communicate.stream():
+        if part["type"] == "audio":
+            buffer.write(part["data"])
     return buffer.getvalue()
 
 
@@ -96,12 +151,6 @@ async def synthesize_chunked(tokens: list[str]) -> bytes:
 # Helpers
 # ---------------------------------------------------------------------------
 def extract_detections(gated_results: list) -> tuple[list[str], list]:
-    """
-    Return (tokens, boxes) for all results that passed the confidence gate.
-
-    boxes is a list of dicts with normalized coordinates [x1,y1,x2,y2,x3,y3,x4,y4]
-    as returned by the detector. Frontend uses these for canvas overlay.
-    """
     tokens = []
     boxes  = []
     for r in gated_results:
@@ -176,13 +225,13 @@ async def ocr_image(file: UploadFile = File(...)):
     image_bytes = await file.read()
     image = load_image_from_bytes(image_bytes)
 
-    result          = pipeline.run(image)
-    tokens, boxes   = extract_detections(result["gated_results"])
-    text            = " ".join(tokens)
+    result        = pipeline.run(image)
+    tokens, boxes = extract_detections(result["gated_results"])
+    text          = " ".join(tokens)
 
     audio_b64 = ""
     if tokens:
-        audio_bytes = await synthesize_chunked(tokens)
+        audio_bytes = await synthesize(tokens)
         audio_b64   = base64.b64encode(audio_bytes).decode()
 
     feedback = build_feedback_message(result) if not tokens else ""
@@ -209,13 +258,13 @@ async def ocr_image(file: UploadFile = File(...)):
 async def ocr_image_base64(payload: ImagePayload):
     image = decode_base64_image(payload.image)
 
-    result          = pipeline.run(image)
-    tokens, boxes   = extract_detections(result["gated_results"])
-    text            = " ".join(tokens)
+    result        = pipeline.run(image)
+    tokens, boxes = extract_detections(result["gated_results"])
+    text          = " ".join(tokens)
 
     audio_b64 = ""
     if tokens:
-        audio_bytes = await synthesize_chunked(tokens)
+        audio_bytes = await synthesize(tokens)
         audio_b64   = base64.b64encode(audio_bytes).decode()
 
     feedback = build_feedback_message(result) if not tokens else ""
@@ -255,13 +304,13 @@ async def ocr_stream(websocket: WebSocket):
                 continue
             last_frame_time = now
 
-            image_bytes     = base64.b64decode(data)
-            image           = load_image_from_bytes(image_bytes)
-            image           = compress_frame(image, quality=60)
+            image_bytes = base64.b64decode(data)
+            image       = load_image_from_bytes(image_bytes)
+            image       = compress_frame(image, quality=60)
 
-            result          = pipeline.run(image)
-            tokens, boxes   = extract_detections(result["gated_results"])
-            text            = " ".join(tokens)
+            result        = pipeline.run(image)
+            tokens, boxes = extract_detections(result["gated_results"])
+            text          = " ".join(tokens)
 
             meta = {
                 "n_spoken":   result["n_spoken"],
@@ -273,7 +322,6 @@ async def ocr_stream(websocket: WebSocket):
             if tokens and is_new_text(text, last_text):
                 last_text = text
 
-                # Send text and boxes immediately so UI updates without waiting for audio
                 await websocket.send_json({
                     "type":     "text",
                     "text":     text,
@@ -284,8 +332,7 @@ async def ocr_stream(websocket: WebSocket):
                     "meta":     meta
                 })
 
-                # Generate and send audio after
-                audio_bytes = await synthesize_chunked(tokens)
+                audio_bytes = await synthesize(tokens)
                 audio_b64   = base64.b64encode(audio_bytes).decode()
                 await websocket.send_json({
                     "type":     "audio",
