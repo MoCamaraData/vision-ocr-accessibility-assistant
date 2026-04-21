@@ -50,7 +50,7 @@ app.add_middleware(
 # Config
 # ---------------------------------------------------------------------------
 HF_REPO           = os.getenv("HF_REPO", "MoCamaraData/trocr-ocr-accessibility")
-DEVICE            = os.getenv("DEVICE", "cpu")
+DEVICE            = os.getenv("DEVICE", "cuda")
 VOICE             = "en-US-AriaNeural"
 SIMILARITY_THRESH = 0.80
 FRAME_INTERVAL_S  = 0.30
