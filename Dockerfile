@@ -34,8 +34,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # ---------------------------------------------------------------------------
 COPY src/         ./src/
 COPY configs/     ./configs/
-COPY app/backend/ ./app/backend/
-COPY tts/         ./tts/   
+COPY app/backend/ ./app/backend/  
 
 # ---------------------------------------------------------------------------
 # Bake model weights into image at build time
