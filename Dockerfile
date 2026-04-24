@@ -50,7 +50,7 @@ TrOCRProcessor.from_pretrained(repo); \
 VisionEncoderDecoderModel.from_pretrained(repo); \
 print('Model baked into image.')"
 
-# ---------------------------------------------------------------------------
+# - --------------------------------------------------------------------------
 # Expose port
 # ---------------------------------------------------------------------------
 EXPOSE 7860

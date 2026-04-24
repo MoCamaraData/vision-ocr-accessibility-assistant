@@ -1,4 +1,5 @@
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+const API_BASE = import.meta.env.VITE_API_URL || "https://mocamaradata-visionlens-api.hf.space";
 const WS_BASE  = API_BASE.replace(/^http/, "ws");
 
 export const API = {
