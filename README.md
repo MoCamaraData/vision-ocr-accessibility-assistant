@@ -1,95 +1,80 @@
-# VisionLens — OCR Accessibility Assistant
+# VisionLens — Real-Time OCR Accessibility Assistant
 
-> Point a camera at a sign, label, or menu. The assistant detects the text, recognizes it, and speaks it aloud — all within a 2-second latency budget.
+A real-time camera-to-voice reading assistant that detects, recognizes, and speaks aloud printed text from natural-scene images. Built to help visually impaired users access signage, labels, menus, and documents in their environment, with a hard 2-second latency budget from frame to speech.
 
-Real-time camera-to-voice reading aid for visually impaired users. A fine-tuned TrOCR model reaches **CER 0.1998** on COCO-Text. The full pipeline — detection, postprocessing, recognition, confidence gating, and TTS — runs end-to-end in under 2 seconds.
+**Live demo:** [visionlens-ui.vercel.app](https://visionlens-ui.vercel.app) · **Model:** [MoCamaraData/trocr-ocr-accessibility](https://huggingface.co/MoCamaraData/trocr-ocr-accessibility) · **Experiments:** [DagsHub MLflow](https://dagshub.com/MoCamaraData/vision-ocr-accessibility-assistant/experiments)
 
----
+## Problem
 
-## How it works
+Visually impaired users navigate environments full of text they cannot read: store signs, restaurant menus, transit information, medication labels, price tags. Off-the-shelf OCR is tuned for clean document scans and fails on the messy, angled, low-light text that appears in the real world. The system also has to be hands-free, since a screen-based reader is not useful when the user cannot see the screen.
 
-```
-Camera Frame
-    │
-    ├─ detection/       docTR db_resnet50 — returns bounding boxes
-    │
-    ├─ postprocessing/  IoU deduplication → reading order sort → crop
-    │
-    ├─ recognition/     TrOCR fine-tuned on COCO-Text (CER 0.1998)
-    │
-    ├─ confidence gate  Silences results below 0.75 — avoids garbled speech
-    │
-    └─ TTS              edge-tts (cloud) or pyttsx3 (local)
-```
+## Approach
 
-The pipeline is configured entirely from `configs/pipeline.yaml` — nothing is hardcoded in source files.
+The pipeline is deliberately split into three stages so each can be evaluated, swapped, and tuned independently.
 
----
+**Stage 1: Text Detection (docTR · `db_resnet50`)**
+A pretrained docTR detector produces axis-aligned bounding boxes for every text region in the frame. The number of detected regions is capped at 12 per frame to bound worst-case latency in the next stage.
+
+**Stage 2: Text Recognition (TrOCR fine-tuned on COCO-Text)**
+Each cropped region passes through a TrOCR model that was fine-tuned from `microsoft/trocr-base-printed` on COCO-Text. The dataset shift from clean printed text to natural-scene text was the entire reason for fine-tuning: base TrOCR is strong on documents but weak on signage. Predictions below a 0.75 confidence threshold are silenced rather than spoken aloud, on the principle that for an accessibility tool, saying nothing is better than saying the wrong thing.
+
+**Stage 3: Text-to-Speech (Edge TTS · `en-US-AriaNeural`)**
+Surviving predictions are sorted into reading order, deduplicated by IoU, and synthesized as speech using Microsoft's Edge TTS. A local `pyttsx3` fallback is included for offline use.
+
+The entire pipeline is exposed as a FastAPI service with both HTTP and WebSocket endpoints and consumed by a React + Vite frontend that handles live camera streaming, image upload, audio playback, and i18n.
 
 ## Results
 
-| Metric | Value |
-|---|---:|
-| CER — fine-tuned TrOCR | **0.1998** |
-| Confidence gate threshold | 0.75 |
-| Latency budget | 2.0 s |
-| Max crops per image | 12 |
+| Metric | Value | Notes |
+|---|---:|---|
+| **Character Error Rate (CER)** | **0.1998** | Fine-tuned TrOCR on COCO-Text test split |
+| Confidence threshold | 0.75 | Below this, predictions are silenced |
+| Detection cap | 12 regions / frame | Bounds worst-case recognition time |
+| Latency budget | 2.0 s | Frame to speech, hard requirement |
+| Frontend | Vercel | [visionlens-ui.vercel.app](https://visionlens-ui.vercel.app) |
+| Backend | HuggingFace Spaces | Dockerized FastAPI service |
 
-Fine-tuning on COCO-Text delivers the biggest quality gain. The confidence gate and IoU deduplication together eliminate the main sources of garbled or repeated speech.
+CER of 0.1998 means roughly 4 out of 5 characters are read correctly on first pass, which for natural-scene text is competitive with published baselines. All training runs and hyperparameters are tracked in [DagsHub MLflow](https://dagshub.com/MoCamaraData/vision-ocr-accessibility-assistant/experiments).
 
----
+## Key findings
 
-## Three ways to use it
+- **Detection and recognition belong in separate stages.** An end-to-end model would have been simpler to ship but harder to debug and harder to bound. Splitting the pipeline lets the recognition stage be swapped or upgraded without touching detection, and lets the detection cap enforce the latency budget.
+- **Fine-tuning on the deployment domain is non-optional.** Base `trocr-base-printed` is trained on document-style text and underperforms badly on signage. Fine-tuning on COCO-Text closed most of that gap and made the system usable.
+- **Silencing low-confidence predictions is better than always speaking.** Early versions spoke every detected region. Users found this disorienting because incorrect speech is harder to ignore than missing speech. The 0.75 threshold was chosen empirically to maximize signal over noise.
+- **Config-driven pipeline pays off immediately.** Every constant (threshold, crop cap, latency budget, model paths, TTS voice) lives in [`configs/pipeline.yaml`](configs/pipeline.yaml). Tuning the system for a new deployment does not require code changes.
+- **Bake model weights into the Docker image.** First-request latency on a fresh container drops from minutes (downloading from the Hub) to seconds. The Dockerfile pulls weights at build time using the `HF_REPO` env variable.
 
-**Gradio demo (HuggingFace Spaces)**
-Upload an image, take a webcam snapshot, or stream in real time. The pipeline annotates detections with green (spoken) and red (silenced) boxes.
-
-**Web app (FastAPI + React)**
-Production-grade interface with a live camera tab (WebSocket), image upload tab (HTTP), and bilingual UI (English / French). See [Quick start](#quick-start) below.
-
-**Research notebooks**
-Full development trail in `notebooks/` — EDA, detection benchmark, recognition benchmark, fine-tuning, and ablation studies. Start from `01_dataset_engineering_and_eda.ipynb`.
-
----
-
-## Repo structure
+## Repo Structure
 
 ```
 vision-ocr-accessibility-assistant/
-├── src/                    Core ML pipeline (framework-agnostic)
-│   ├── pipeline.py         Pipeline class — loads all models, runs pipe.run(image)
-│   ├── confidence.py       Confidence gate — silences text below threshold
-│   ├── detection/          docTR db_resnet50 wrapper
-│   ├── recognition/        TrOCR processor + model wrapper
-│   ├── postprocessing/     IoU deduplication, reading order, cropper
-│   ├── tts/                Speaker — pyttsx3 (local) or edge-tts (cloud)
-│   └── utils/              Shared metrics: IoU, CER, WER
 ├── app/
-│   ├── backend/            FastAPI server — HTTP + WebSocket endpoints
-│   └── frontend/           React + Vite UI — camera, upload, audio playback
-├── app.py                  Gradio demo (HuggingFace Spaces entry point)
-├── notebooks/              Research notebooks — EDA through fine-tuning
-├── scripts/                Stratified sample extraction utilities
-├── configs/
-│   ├── pipeline.yaml       All pipeline hyperparameters
-│   └── paths.yaml          Dataset and output paths
-├── docs/                   Extended project documentation
-├── Dockerfile              Production image — bakes TrOCR weights at build time
-└── docker-compose.yml      Single-service backend stack
+│   ├── backend/          FastAPI server (OCR endpoints + WebSocket stream)
+│   └── frontend/         React + Vite UI (live camera, upload, i18n)
+├── src/
+│   ├── detection/        docTR db_resnet50 text detector
+│   ├── recognition/      TrOCR processor and model
+│   ├── postprocessing/   Cropper, reading-order sorter, IoU deduplicator
+│   ├── tts/              Speaker (local pyttsx3 / cloud edge-tts)
+│   └── utils/            Shared metrics (IoU, CER, WER)
+├── configs/              YAML configuration and environment files
+├── notebooks/            Jupyter notebooks (EDA → fine-tuning → demo)
+├── docs/                 Architecture notes and evaluation methodology
+├── scripts/              Training, evaluation, and deployment scripts
+├── data/processed/       Benchmark samples
+├── app.py                Gradio entry point (HuggingFace Spaces)
+├── Dockerfile            Production image (bakes model weights at build time)
+└── docker-compose.yml
 ```
 
----
+## Setup
 
-## Quick start
-
-### Docker (production)
+### Docker (recommended)
 
 ```bash
 docker build -t visionlens .
-docker run -p 8000:8000 visionlens
+docker run -p 7860:7860 visionlens
 ```
-
-The image downloads and bakes TrOCR weights from HuggingFace at build time via the `HF_REPO` env var (`MoCamaraData/trocr-ocr-accessibility`).
 
 ### Local development
 
@@ -109,40 +94,37 @@ npm install
 npm run dev
 ```
 
-Set `VITE_API_URL` in `app/frontend/.env` to point at the backend if it is not running on the default URL.
+Set `VITE_API_URL` in `app/frontend/.env` to point at your backend if it is not running on the default HuggingFace Space URL.
 
----
+## API
 
-## Key configuration
-
-All pipeline constants live in [`configs/pipeline.yaml`](configs/pipeline.yaml). Nothing is hardcoded in source files.
-
-| Parameter | Default | Notes |
+| Method | Path | Description |
 |---|---|---|
-| Detection model | `db_resnet50` | docTR pretrained |
-| Recognition checkpoint | `microsoft/trocr-base-printed` | overridden by `HF_REPO` in prod |
-| Confidence threshold | `0.75` | validated in Phase 5 |
-| Max crops per image | `12` | caps worst-case latency |
-| Latency budget | `2.0 s` | hard requirement from Phase 0 |
-| TTS backend | `local` | `"local"` or `"cloud"` |
+| `GET` | `/health` | Health check, returns model and device info |
+| `POST` | `/ocr/image` | Multipart image upload, returns text, boxes, audio (base64) |
+| `POST` | `/ocr/image/base64` | Base64 image payload, same response schema |
+| `WS` | `/ocr/stream` | WebSocket for continuous webcam frame processing |
 
----
+## Next Steps
 
-## Model
+- Multilingual recognition (French first, then Spanish)
+- On-device inference for offline use
+- Confidence-aware re-prompting when text is detected but silenced
+- Per-user voice preference and reading speed
+- Real-world CER measurement on a held-out signage benchmark (current 0.1998 is COCO-Text test split)
 
-The fine-tuned TrOCR model is hosted publicly on HuggingFace Hub:
-[MoCamaraData/trocr-ocr-accessibility](https://huggingface.co/MoCamaraData/trocr-ocr-accessibility)
+## Tech Stack
 
-- Base: `microsoft/trocr-base-printed`
-- Fine-tuned on: COCO-Text dataset
-- CER: **0.1998**
+PyTorch, Transformers, docTR, FastAPI, React 18 + Vite 5, Docker, Edge TTS, MLflow (DagsHub), Gradio, HuggingFace Hub, Vercel.
 
----
+## Capstone Project
 
-## Capstone project — La Cité Collégiale, 2026
+Built as the capstone project for the AI program at **La Cité Collégiale** (Ottawa), 2026.
 
----
+## License
 
-## Tech stack
+MIT. See [LICENSE](LICENSE).
 
-PyTorch · docTR · Transformers (TrOCR) · edge-tts · FastAPI · Uvicorn · React 18 · Vite · Gradio · DagsHub MLflow
+## Contact
+
+Mohamed Sanoussy Camara · [LinkedIn](https://linkedin.com/in/mohamed-sanoussy-camara) · [Portfolio](https://mocamara-data-portfolio.vercel.app) · [GitHub](https://github.com/MoCamaraData)
