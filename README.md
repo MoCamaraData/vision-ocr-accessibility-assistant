@@ -105,13 +105,24 @@ Set `VITE_API_URL` in `app/frontend/.env` to point at your backend if it is not 
 | `POST` | `/ocr/image/base64` | Base64 image payload, same response schema |
 | `WS` | `/ocr/stream` | WebSocket for continuous webcam frame processing |
 
-## Next Steps
+## Roadmap
 
-- Multilingual recognition (French first, then Spanish)
-- On-device inference for offline use
-- Confidence-aware re-prompting when text is detected but silenced
-- Per-user voice preference and reading speed
-- Real-world CER measurement on a held-out signage benchmark (current 0.1998 is COCO-Text test split)
+**Reading and recognition**
+- Long-document mode: lift the 12-crop-per-frame cap for dense text (books, menus, multi-paragraph labels) using a tiled inference strategy with a separate latency budget from the signage fast path
+- Handwritten text recognition: fine-tune on a handwriting dataset (IAM or similar) to handle notes, whiteboards, and handwritten prescriptions. The current model is trained on printed text and fails on handwriting.
+- Reading speed control: adjustable TTS playback speed for users with different cognitive processing needs
+
+**Languages**
+- Full multilingual recognition starting with French (the current FR toggle switches UI labels only; recognition and TTS remain English)
+- Language auto-detection so the voice switches automatically without user input
+
+**Deployment and performance**
+- On-device inference for offline use (MobileViT or a quantised TrOCR variant), critical for users in stores, transit, or areas with poor connectivity
+- Cold-start optimisation: model weight caching to reduce first-request latency on HuggingFace Spaces
+
+**Evaluation**
+- Real-world CER benchmark on an in-the-wild signage dataset (current 0.1998 is on COCO-Text test split, which is cleaner than typical deployment conditions)
+- Per-class error analysis to identify which text types drive most failures
 
 ## Tech Stack
 
