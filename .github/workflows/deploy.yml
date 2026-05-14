@@ -11,15 +11,58 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          lfs: true
 
-      - name: Push to HuggingFace Space
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install huggingface_hub
+        run: pip install --upgrade huggingface_hub
+
+      - name: Upload to HuggingFace Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          git config --global user.email "action@github.com"
-          git config --global user.name "GitHub Action"
-          git remote add space https://MoCamaraData:$HF_TOKEN@huggingface.co/spaces/MoCamaraData/visionlens-api
-          git push space main --force
+          python - <<'EOF'
+          import os
+          from huggingface_hub import HfApi
+
+          sha = os.environ.get("GITHUB_SHA", "")[:7]
+
+          # Allow-list: exactly the files/folders the Space should contain.
+          # Mirrors the current HF Space layout (app, configs, docs, notebooks,
+          # scripts, src, .gitignore, Dockerfile, README.md, app.py, docker-compose.yml).
+          ALLOW = [
+              "app/**",
+              "configs/**",
+              "docs/**",
+              "notebooks/**",
+              "scripts/**",
+              "src/**",
+              "app.py",
+              "Dockerfile",
+              "README.md",
+              "docker-compose.yml",
+              ".gitignore",
+          ]
+
+          # Carve-outs inside ALLOW.
+          # The frontend lives under app/ but the Space only runs the backend.
+          IGNORE = [
+              "app/frontend/node_modules/**",
+              "app/frontend/dist/**",
+              "app/frontend/.vite/**",
+              "**/__pycache__/**",
+              "**/*.pyc",
+          ]
+
+          HfApi(token=os.environ["HF_TOKEN"]).upload_folder(
+              folder_path=".",
+              repo_id="MoCamaraData/visionlens-api",
+              repo_type="space",
+              commit_message=f"Sync from GitHub @ {sha}",
+              allow_patterns=ALLOW,
+              ignore_patterns=IGNORE,
+          )
+          EOF
