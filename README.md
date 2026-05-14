@@ -1,5 +1,7 @@
 # VisionLens — Real-Time OCR Accessibility Assistant
 
+[![Deploy to HuggingFace](https://github.com/MoCamaraData/vision-ocr-accessibility-assistant/actions/workflows/deploy.yml/badge.svg)](https://github.com/MoCamaraData/vision-ocr-accessibility-assistant/actions/workflows/deploy.yml)
+
 A real-time camera-to-voice reading assistant that detects, recognizes, and speaks aloud printed text from natural-scene images. Built to help visually impaired users access signage, labels, menus, and documents in their environment, with a hard 2-second latency budget from frame to speech.
 
 **Live demo:** [visionlens-ui.vercel.app](https://visionlens-ui.vercel.app) · **Model:** [MoCamaraData/trocr-ocr-accessibility](https://huggingface.co/MoCamaraData/trocr-ocr-accessibility) · **Experiments:** [DagsHub MLflow](https://dagshub.com/MoCamaraData/vision-ocr-accessibility-assistant/experiments)
