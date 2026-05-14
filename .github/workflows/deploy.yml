@@ -28,11 +28,14 @@ jobs:
           import os
           from huggingface_hub import HfApi
 
-          sha = os.environ.get("GITHUB_SHA", "")[:7]
+          REPO_ID   = "MoCamaraData/visionlens-api"
+          REPO_TYPE = "space"
+          sha       = os.environ.get("GITHUB_SHA", "")[:7]
+          api       = HfApi(token=os.environ["HF_TOKEN"])
 
           # Allow-list: exactly the files/folders the Space should contain.
-          # Mirrors the current HF Space layout (app, configs, docs, notebooks,
-          # scripts, src, .gitignore, Dockerfile, README.md, app.py, docker-compose.yml).
+          # Note: README.md is excluded here and uploaded separately below
+          # from hf/README.md (which carries the HF Space frontmatter).
           ALLOW = [
               "app/**",
               "configs/**",
@@ -42,7 +45,6 @@ jobs:
               "src/**",
               "app.py",
               "Dockerfile",
-              "README.md",
               "docker-compose.yml",
               ".gitignore",
           ]
@@ -57,12 +59,22 @@ jobs:
               "**/*.pyc",
           ]
 
-          HfApi(token=os.environ["HF_TOKEN"]).upload_folder(
+          # 1. Upload the project tree (everything except README).
+          api.upload_folder(
               folder_path=".",
-              repo_id="MoCamaraData/visionlens-api",
-              repo_type="space",
+              repo_id=REPO_ID,
+              repo_type=REPO_TYPE,
               commit_message=f"Sync from GitHub @ {sha}",
               allow_patterns=ALLOW,
               ignore_patterns=IGNORE,
+          )
+
+          # 2. Upload the Space-specific README (preserves HF frontmatter).
+          api.upload_file(
+              path_or_fileobj=".github/hf-readme.md",
+              path_in_repo="README.md",
+              repo_id=REPO_ID,
+              repo_type=REPO_TYPE,
+              commit_message=f"Sync Space README @ {sha}",
           )
           EOF
